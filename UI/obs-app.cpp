@@ -1508,7 +1508,8 @@ string OBSApp::GetVersionString() const
 #elif __OpenBSD__
 	ver << "openbsd)";
 #elif __FreeBSD__
-	ver << "freebsd)";
+	/* ver << "freebsd)"; */
+	ver << "aquaBSD)"; // assume aquaBSD for the time being
 #else /* assume linux for the time being */
 	ver << "linux)";
 #endif

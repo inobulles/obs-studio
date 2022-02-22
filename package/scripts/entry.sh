@@ -4,5 +4,5 @@ set -e
 chmod +x bin/obs
 
 ( cd bin
-	./obs $@
+	nv-sglrun ./obs $@
 )
