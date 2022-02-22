@@ -1,0 +1,17 @@
+{
+	// information about the application
+
+	"unique": "obsproject.obs_studio",
+	"name": "OBS Studio",
+	"organization": "OBS Project",
+	"version": "27.2.0 (aquaBSD)",
+	"description": "Free and open source software for video recording and live streaming.",
+
+	"website": "https://www.obsproject.com",
+	"icon": "icon.svg",
+
+	// what to do when the application is run
+	
+	"start": "system",
+	"entry": "entry.sh"
+}

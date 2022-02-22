@@ -175,12 +175,12 @@ static int scanfilter(const struct dirent *entry)
 
 #if defined(__FreeBSD__)
 // XXX versionsort is a glibc extension; implement it on FreeBSD
-// __strverscmp comes glibc/string/strvercmp.c
+// __strverscmp comes from glibc/string/strvercmp.c
 
 #include <ctype.h>
 
 /* states: S_N: normal, S_I: comparing integral part, S_F: comparing
-           fractionnal parts, S_Z: idem but with leading Zeroes only */
+           fractional parts, S_Z: idem but with leading Zeroes only */
 #define  S_N    0x0
 #define  S_I    0x3
 #define  S_F    0x6

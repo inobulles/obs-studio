@@ -35,3 +35,13 @@ numthreads=$(sysctl -n hw.ncpu)
 make -j$numthreads
 
 # package
+
+aqua-manager --create --type custom --path package
+
+cp -r ../package/* package
+cp -r package/scripts/* package/.package
+mkdir -p package/.package/bin
+cp -r rundir/RelWithDebInfo/bin/64bit/* package/.package/bin
+
+aqua-manager --layout --path package
+iar --pack package/.package --output package.zpk
