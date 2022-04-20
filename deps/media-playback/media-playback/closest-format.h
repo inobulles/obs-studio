@@ -36,6 +36,8 @@ static enum AVPixelFormat closest_format(enum AVPixelFormat fmt)
 		return AV_PIX_FMT_YUV444P;
 
 	case AV_PIX_FMT_YUV422P:
+		return AV_PIX_FMT_YUV422P;
+
 	case AV_PIX_FMT_YUVJ422P:
 	case AV_PIX_FMT_UYVY422:
 	case AV_PIX_FMT_YUV422P16LE:
@@ -56,10 +58,12 @@ static enum AVPixelFormat closest_format(enum AVPixelFormat fmt)
 		return AV_PIX_FMT_NV12;
 
 	case AV_PIX_FMT_YUV420P:
-	case AV_PIX_FMT_YUVJ420P:
-	case AV_PIX_FMT_YUV411P:
-	case AV_PIX_FMT_UYYVYY411:
 	case AV_PIX_FMT_YUV410P:
+	case AV_PIX_FMT_YUV411P:
+	case AV_PIX_FMT_YUVJ420P:
+	case AV_PIX_FMT_UYYVYY411:
+		return AV_PIX_FMT_YUV420P;
+
 	case AV_PIX_FMT_YUV420P16LE:
 	case AV_PIX_FMT_YUV420P16BE:
 	case AV_PIX_FMT_YUV420P9BE:
@@ -70,7 +74,7 @@ static enum AVPixelFormat closest_format(enum AVPixelFormat fmt)
 	case AV_PIX_FMT_YUV420P12LE:
 	case AV_PIX_FMT_YUV420P14BE:
 	case AV_PIX_FMT_YUV420P14LE:
-		return AV_PIX_FMT_YUV420P;
+		return AV_PIX_FMT_YUV420P10LE;
 
 	case AV_PIX_FMT_YUVA420P:
 		return AV_PIX_FMT_YUVA420P;
@@ -90,6 +94,9 @@ static enum AVPixelFormat closest_format(enum AVPixelFormat fmt)
 	case AV_PIX_FMT_YUVA444P12LE:
 #endif
 		return AV_PIX_FMT_YUVA444P;
+
+	case AV_PIX_FMT_P010LE:
+		return AV_PIX_FMT_P010LE;
 
 	case AV_PIX_FMT_RGBA:
 	case AV_PIX_FMT_BGRA:

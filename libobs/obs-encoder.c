@@ -187,8 +187,9 @@ static inline bool has_scaling(const struct obs_encoder *encoder)
 
 static inline bool gpu_encode_available(const struct obs_encoder *encoder)
 {
+	struct obs_core_video *const video = &obs->video;
 	return (encoder->info.caps & OBS_ENCODER_CAP_PASS_TEXTURE) != 0 &&
-	       obs->video.using_nv12_tex;
+	       (video->using_p010_tex || video->using_nv12_tex);
 }
 
 static void add_connection(struct obs_encoder *encoder)
@@ -1086,13 +1087,15 @@ static inline void push_back_audio(struct obs_encoder *encoder,
 				   struct audio_data *data, size_t size,
 				   size_t offset_size)
 {
+	if (offset_size >= size)
+		return;
+
 	size -= offset_size;
 
 	/* push in to the circular buffer */
-	if (size)
-		for (size_t i = 0; i < encoder->planes; i++)
-			circlebuf_push_back(&encoder->audio_input_buffer[i],
-					    data->data[i] + offset_size, size);
+	for (size_t i = 0; i < encoder->planes; i++)
+		circlebuf_push_back(&encoder->audio_input_buffer[i],
+				    data->data[i] + offset_size, size);
 }
 
 static inline size_t calc_offset_size(struct obs_encoder *encoder,

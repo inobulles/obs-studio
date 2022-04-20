@@ -33,13 +33,13 @@
 
 #include <QFile>
 #include <QGuiApplication>
-#include <QProxyStyle>
 #include <QScreen>
 #include <QProcess>
 #include <QAccessible>
 
 #include "qt-wrappers.hpp"
 #include "obs-app.hpp"
+#include "obs-proxy-style.hpp"
 #include "log-viewer.hpp"
 #include "slider-ignorewheel.hpp"
 #include "window-basic-main.hpp"
@@ -389,20 +389,23 @@ static void do_log(int log_level, const char *msg, va_list args, void *param)
 			OutputDebugStringW(wide_buf.c_str());
 		}
 	}
-#else
-	def_log_handler(log_level, msg, args2, nullptr);
-	va_end(args2);
 #endif
 
 	if (log_level <= LOG_INFO || log_verbose) {
-		if (too_many_repeated_entries(logFile, msg, str))
-			return;
-		LogStringChunk(logFile, str, log_level);
+#ifndef _WIN32
+		def_log_handler(log_level, msg, args2, nullptr);
+#endif
+		if (!too_many_repeated_entries(logFile, msg, str))
+			LogStringChunk(logFile, str, log_level);
 	}
 
 #if defined(_WIN32) && defined(OBS_DEBUGBREAK_ON_ERROR)
 	if (log_level <= LOG_ERROR && IsDebuggerPresent())
 		__debugbreak();
+#endif
+
+#ifndef _WIN32
+	va_end(args2);
 #endif
 }
 
@@ -1117,6 +1120,7 @@ bool OBSApp::SetTheme(std::string name, std::string path)
 	QString mpath = QString("file:///") + path.c_str();
 	setPalette(defaultPalette);
 	ParseExtraThemeData(path.c_str());
+	setStyle(new OBSIgnoreWheelProxyStyle);
 	setStyleSheet(mpath);
 	QColor color = palette().text().color();
 	themeDarkMode = !(color.redF() < 0.5);
@@ -1156,12 +1160,15 @@ bool OBSApp::InitTheme()
 OBSApp::OBSApp(int &argc, char **argv, profiler_name_store_t *store)
 	: QApplication(argc, argv), profilerNameStore(store)
 {
+	/* fix float handling */
+#if defined(Q_OS_UNIX)
+	if (!setlocale(LC_NUMERIC, "C"))
+		blog(LOG_WARNING, "Failed to set LC_NUMERIC to C locale");
+#endif
+
 	sleepInhibitor = os_inhibit_sleep_create("OBS Video/audio");
 
-#ifdef __APPLE__
-	setWindowIcon(
-		QIcon::fromTheme("obs", QIcon(":/res/images/obs_256x256.png")));
-#else
+#ifndef __APPLE__
 	setWindowIcon(QIcon::fromTheme("obs", QIcon(":/res/images/obs.png")));
 #endif
 
@@ -1278,8 +1285,6 @@ void OBSApp::AppInit()
 {
 	ProfileScope("OBSApp::AppInit");
 
-	if (!InitApplicationBundle())
-		throw "Failed to initialize application bundle";
 	if (!MakeUserDirs())
 		throw "Failed to create required user directories";
 	if (!InitGlobalConfig())
@@ -2062,6 +2067,12 @@ static int run_program(fstream &logFile, int argc, char *argv[])
 
 #if __APPLE__
 	InstallNSApplicationSubclass();
+
+	if (!isInBundle()) {
+		blog(LOG_ERROR,
+		     "OBS cannot be run as a standalone binary on macOS. Run the Application bundle instead.");
+		return ret;
+	}
 #endif
 
 #if !defined(_WIN32) && !defined(__APPLE__) && defined(USE_XDG) && \
@@ -2094,15 +2105,10 @@ static int run_program(fstream &logFile, int argc, char *argv[])
 		bool cancel_launch = false;
 		bool already_running = false;
 
-#if defined(_WIN32)
-		RunOnceMutex rom = GetRunOnceMutex(already_running);
-#elif defined(__APPLE__)
-		CheckAppWithSameBundleID(already_running);
-#elif defined(__linux__)
-		RunningInstanceCheck(already_running);
-#elif defined(__FreeBSD__) || defined(__DragonFly__)
-		PIDFileCheck(already_running);
+#ifdef _WIN32
+		RunOnceMutex rom =
 #endif
+			CheckIfAlreadyRunning(already_running);
 
 		if (!already_running) {
 			goto run;
@@ -2342,13 +2348,13 @@ static void load_debug_privilege(void)
 
 #define CONFIG_PATH BASE_PATH "/config"
 
-#ifndef OBS_UNIX_STRUCTURE
-#define OBS_UNIX_STRUCTURE 0
+#ifndef LINUX_PORTABLE
+#define LINUX_PORTABLE 0
 #endif
 
 int GetConfigPath(char *path, size_t size, const char *name)
 {
-	if (!OBS_UNIX_STRUCTURE && portable_mode) {
+	if (LINUX_PORTABLE && portable_mode) {
 		if (name && *name) {
 			return snprintf(path, size, CONFIG_PATH "/%s", name);
 		} else {
@@ -2361,7 +2367,7 @@ int GetConfigPath(char *path, size_t size, const char *name)
 
 char *GetConfigPathPtr(const char *name)
 {
-	if (!OBS_UNIX_STRUCTURE && portable_mode) {
+	if (LINUX_PORTABLE && portable_mode) {
 		char path[512];
 
 		if (snprintf(path, sizeof(path), CONFIG_PATH "/%s", name) > 0) {
@@ -2873,7 +2879,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-#if !OBS_UNIX_STRUCTURE
+#if defined(LINUX_PORTABLE)
 	if (!portable_mode) {
 		portable_mode =
 			os_file_exists(BASE_PATH "/portable_mode") ||

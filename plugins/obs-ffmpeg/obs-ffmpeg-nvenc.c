@@ -43,6 +43,8 @@ struct nvenc_encoder {
 	AVCodec *nvenc;
 	AVCodecContext *context;
 
+	AVPacket *packet;
+
 	AVFrame *vframe;
 
 	DARRAY(uint8_t) buffer;
@@ -163,6 +165,8 @@ static bool nvenc_init_codec(struct nvenc_encoder *enc, bool psycho_aq)
 		return false;
 	}
 
+	enc->packet = av_packet_alloc();
+
 	enc->initialized = true;
 	return true;
 }
@@ -254,21 +258,30 @@ static bool nvenc_update(struct nvenc_encoder *enc, obs_data_t *settings,
 
 	switch (info.colorspace) {
 	case VIDEO_CS_601:
-		enc->context->color_trc = AVCOL_TRC_SMPTE170M;
 		enc->context->color_primaries = AVCOL_PRI_SMPTE170M;
+		enc->context->color_trc = AVCOL_TRC_SMPTE170M;
 		enc->context->colorspace = AVCOL_SPC_SMPTE170M;
 		break;
 	case VIDEO_CS_DEFAULT:
 	case VIDEO_CS_709:
-		enc->context->color_trc = AVCOL_TRC_BT709;
 		enc->context->color_primaries = AVCOL_PRI_BT709;
+		enc->context->color_trc = AVCOL_TRC_BT709;
 		enc->context->colorspace = AVCOL_SPC_BT709;
 		break;
 	case VIDEO_CS_SRGB:
-		enc->context->color_trc = AVCOL_TRC_IEC61966_2_1;
 		enc->context->color_primaries = AVCOL_PRI_BT709;
+		enc->context->color_trc = AVCOL_TRC_IEC61966_2_1;
 		enc->context->colorspace = AVCOL_SPC_BT709;
 		break;
+	case VIDEO_CS_2100_PQ:
+		enc->context->color_primaries = AVCOL_PRI_BT2020;
+		enc->context->color_trc = AVCOL_TRC_SMPTE2084;
+		enc->context->colorspace = AVCOL_SPC_BT2020_NCL;
+		break;
+	case VIDEO_CS_2100_HLG:
+		enc->context->color_primaries = AVCOL_PRI_BT2020;
+		enc->context->color_trc = AVCOL_TRC_ARIB_STD_B67;
+		enc->context->colorspace = AVCOL_SPC_BT2020_NCL;
 	}
 
 	if (keyint_sec)
@@ -318,30 +331,34 @@ static bool nvenc_reconfigure(void *data, obs_data_t *settings)
 	return true;
 }
 
+static inline void flush_remaining_packets(struct nvenc_encoder *enc)
+{
+	int r_pkt = 1;
+
+	while (r_pkt) {
+#if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(57, 40, 101)
+		if (avcodec_receive_packet(enc->context, enc->packet) < 0)
+			break;
+#else
+		if (avcodec_encode_video2(enc->context, enc->packet, NULL,
+					  &r_pkt) < 0)
+			break;
+#endif
+
+		if (r_pkt)
+			av_packet_unref(enc->packet);
+	}
+}
+
 static void nvenc_destroy(void *data)
 {
 	struct nvenc_encoder *enc = data;
 
-	if (enc->initialized) {
-		AVPacket pkt = {0};
-		int r_pkt = 1;
+	if (enc->initialized)
+		flush_remaining_packets(enc);
 
-		while (r_pkt) {
-#if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(57, 40, 101)
-			if (avcodec_receive_packet(enc->context, &pkt) < 0)
-				break;
-#else
-			if (avcodec_encode_video2(enc->context, &pkt, NULL,
-						  &r_pkt) < 0)
-				break;
-#endif
-
-			if (r_pkt)
-				av_packet_unref(&pkt);
-		}
-	}
-
-	avcodec_close(enc->context);
+	av_packet_free(&enc->packet);
+	avcodec_free_context(&enc->context);
 	av_frame_unref(enc->vframe);
 	av_frame_free(&enc->vframe);
 	da_free(enc->buffer);
@@ -436,11 +453,8 @@ static bool nvenc_encode(void *data, struct encoder_frame *frame,
 			 struct encoder_packet *packet, bool *received_packet)
 {
 	struct nvenc_encoder *enc = data;
-	AVPacket av_pkt = {0};
 	int got_packet;
 	int ret;
-
-	av_init_packet(&av_pkt);
 
 	copy_data(enc->vframe, frame, enc->height, enc->context->pix_fmt);
 
@@ -448,14 +462,14 @@ static bool nvenc_encode(void *data, struct encoder_frame *frame,
 #if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(57, 40, 101)
 	ret = avcodec_send_frame(enc->context, enc->vframe);
 	if (ret == 0)
-		ret = avcodec_receive_packet(enc->context, &av_pkt);
+		ret = avcodec_receive_packet(enc->context, enc->packet);
 
 	got_packet = (ret == 0);
 
 	if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN))
 		ret = 0;
 #else
-	ret = avcodec_encode_video2(enc->context, &av_pkt, enc->vframe,
+	ret = avcodec_encode_video2(enc->context, enc->packet, enc->vframe,
 				    &got_packet);
 #endif
 	if (ret < 0) {
@@ -463,25 +477,27 @@ static bool nvenc_encode(void *data, struct encoder_frame *frame,
 		return false;
 	}
 
-	if (got_packet && av_pkt.size) {
+	if (got_packet && enc->packet->size) {
 		if (enc->first_packet) {
 			uint8_t *new_packet;
 			size_t size;
 
 			enc->first_packet = false;
-			obs_extract_avc_headers(av_pkt.data, av_pkt.size,
-						&new_packet, &size,
-						&enc->header, &enc->header_size,
-						&enc->sei, &enc->sei_size);
+			obs_extract_avc_headers(enc->packet->data,
+						enc->packet->size, &new_packet,
+						&size, &enc->header,
+						&enc->header_size, &enc->sei,
+						&enc->sei_size);
 
 			da_copy_array(enc->buffer, new_packet, size);
 			bfree(new_packet);
 		} else {
-			da_copy_array(enc->buffer, av_pkt.data, av_pkt.size);
+			da_copy_array(enc->buffer, enc->packet->data,
+				      enc->packet->size);
 		}
 
-		packet->pts = av_pkt.pts;
-		packet->dts = av_pkt.dts;
+		packet->pts = enc->packet->pts;
+		packet->dts = enc->packet->dts;
 		packet->data = enc->buffer.array;
 		packet->size = enc->buffer.num;
 		packet->type = OBS_ENCODER_VIDEO;
@@ -491,7 +507,7 @@ static bool nvenc_encode(void *data, struct encoder_frame *frame,
 		*received_packet = false;
 	}
 
-	av_packet_unref(&av_pkt);
+	av_packet_unref(enc->packet);
 	return true;
 }
 
